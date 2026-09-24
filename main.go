@@ -32,17 +32,24 @@ func main() {
 	const filepathRoot = "."
 
 	godotenv.Load()
-	dbURL := os.Getenv("DB_URL")
-	db, err := sql.Open("postgres", dbURL)
-	fmt.Println(os.Getenv("DB_URL"), os.Getenv("PLATFORM"))
+
+	dbURL := getEnvOrFatal("DB_URL")
+	platform := getEnvOrFatal("PLATFORM")
+	jwtSecret := getEnvOrFatal("SECRET")
+	polkaKey := getEnvOrFatal("POLKA_KEY")
 	
-	dbQueries := database.New(db)
+	dbConn, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatalf("Error opening database: %s", err)
+	}
+
+	dbQueries := database.New(dbConn)
 	
-	cfg := &apiConfig{
+	apiCfg := &apiConfig{
 		db: dbQueries, 
-		platform: os.Getenv("PLATFORM"),
-		secret: os.Getenv("SECRET"),
-		polkaKey: os.Getenv("POLKA_KEY"),
+		platform: platform,
+		secret: jwtSecret,
+		polkaKey: polkaKey,
 	}
 
 	// ServeMux is the Router/traffic cop for the server. 
@@ -52,26 +59,26 @@ func main() {
 
 	// 1. Create the router (mux) to direct traffic
 	mux := http.NewServeMux()
-
+	fsHandler := apiCfg.middlewareMetricInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
 	// Strip "/app/" (with trailing slash) so file server receives relative paths
-	mux.Handle("/app/", cfg.middlewareMetricInc(http.StripPrefix("/app/", http.FileServer(http.Dir(filepathRoot)))))
+	mux.Handle("/app/", fsHandler)
 
 	// Adding handler. A Handler is a rule that looks for a pattern, which then serve files from .Dir.
-	mux.HandleFunc("GET /api/chirps", cfg.handlerGetAllChirps)
-	mux.HandleFunc("GET /api/chirps/{chirpID}", cfg.handlerGetChirp)
-	mux.HandleFunc("POST /api/chirps", cfg.handlerCreateChirp)
-	mux.HandleFunc("DELETE /api/chirps/{chirpID}", cfg.handlerDeleteChirp)
+	mux.HandleFunc("GET /api/chirps", apiCfg.handlerGetAllChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp)
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
-	mux.HandleFunc("POST /api/login", cfg.handlerLogin)
-	mux.HandleFunc("POST /api/polka/webhooks", cfg.handlerPolkaWebhooks)
-	mux.HandleFunc("POST /api/refresh", cfg.handlerRefresh)
-	mux.HandleFunc("POST /api/revoke", cfg.handlerRevoke)
-	mux.HandleFunc("POST /api/users", cfg.handlerCreateUser)
-	mux.HandleFunc("PUT /api/users", cfg.handlerUpdateUser)
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLogin)
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.handlerPolkaWebhooks)
+	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
+	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
+	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
+	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)
 	
 
-	mux.HandleFunc("GET /admin/metrics", cfg.handlerShowCount)
-	mux.HandleFunc("POST /admin/reset", cfg.handlerReset)
+	mux.HandleFunc("GET /admin/metrics", apiCfg.handlerShowCount)
+	mux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
 
 
 	// 2. Create the server and hand it the router
@@ -84,6 +91,14 @@ func main() {
 	if err != nil {
 		log.Fatalln("Server failed starting..")
 	}
+}
+
+func getEnvOrFatal(key string) string {
+	val := os.Getenv(key)
+	if val == "" {
+		log.Fatalf("%s environment variable is not set", key)
+	}
+	return val
 }
 
 func handlerReadiness(writer http.ResponseWriter, req *http.Request) {

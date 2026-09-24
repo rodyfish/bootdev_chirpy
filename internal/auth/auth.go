@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -30,7 +29,7 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Issuer: "chirpy-access",
 		IssuedAt: jwt.NewNumericDate(time.Now().UTC()),
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
+		ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(expiresIn)),
 		Subject: userID.String(),
 	})
 
@@ -39,29 +38,30 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	claims := jwt.RegisteredClaims{}
-	keyFunc := func(token *jwt.Token) (any, error) {
-		 return []byte(tokenSecret), nil
-	}
-	token, err := jwt.ParseWithClaims(tokenString, &claims, keyFunc)
+	token, err := jwt.ParseWithClaims(
+		tokenString, 
+		&claims,
+		func(token *jwt.Token) (any, error) {return []byte(tokenSecret), nil},
+	)
 	if err != nil {
 		return uuid.Nil, err 
 	}
 
-	rawUUID, err := token.Claims.GetSubject()
-	if err != nil {
-		return uuid.Nil, err
-	}
-	
-	userId, err :=  uuid.Parse(rawUUID)
+	userIDString, err := token.Claims.GetSubject()
 	if err != nil {
 		return uuid.Nil, err
 	}
 
-	return userId, nil
+	userID, err :=  uuid.Parse(userIDString)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	return userID, nil
 }
 
-func GetBearerToken(h http.Header) (string, error) {
-	authHeader := h.Get("Authorization")
+func GetBearerToken(headers http.Header) (string, error) {
+	authHeader := headers.Get("Authorization")
 	if authHeader == "" {
 		return "", ErrNoAuthHeaderIncluded
 	}
@@ -74,10 +74,9 @@ func GetBearerToken(h http.Header) (string, error) {
 }
 
 func MakeRefreshToken() string {
-	key := make([]byte, 32)
-	rand.Read(key)
-	fmt.Printf("% x\n", key)
-	return hex.EncodeToString(key)
+	token := make([]byte, 32)
+	rand.Read(token)
+	return hex.EncodeToString(token)
 }
 
 func GetAPIKey(headers http.Header) (string, error) {
